@@ -88,6 +88,8 @@ private:
     void pulsePin(int pin, int timeOn, int timeOff, int count, bool Limits = true);
     void moveMM(int pin, int timeOn, int timeOff, int mm, bool Limits = true);
     int fixLine(const char *line, char words[MAX_WORDS][MAX_WORD_LENGTH]);
+    void moveDig(float Xmm, float Ymm, float MIN_INTERVAL);
+    void escapeLimits(XY limits);
 };
 
 #endif
