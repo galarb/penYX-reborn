@@ -12,8 +12,6 @@ void gcodeparser::setup(int ServoPin, int XDir, int XStep, int YDir, int YStep,
 
     pen.attach(ServoPin);
     
-    pen.write(0);
-
     _XDir = XDir;
     _XStep = XStep;
 
@@ -47,12 +45,16 @@ void gcodeparser::initPins(){
 void gcodeparser::process() {
     while (serialPort.available()) {
         char c = serialPort.read();
-
+        Serial.println("ok");
         if (c == '\n' || c == '\r') { // MAKE A NEW LINE
             lineBuffer[charCount] = '\0';
             if (lineBuffer[0] == 'M' && lineBuffer[1] == '3') StartCode = true;
             if (StartCode){
-                handleLine(lineBuffer);
+                if (lineBuffer != "?"){
+                    Serial.print("Line: ");
+                    Serial.println(lineBuffer);
+                    handleLine(lineBuffer);
+                }
             }
             charCount = 0;
             lineCount++;
@@ -73,13 +75,9 @@ void gcodeparser::handleLine(const char *line){
 
     char letter = line[0];
 
-    Serial.println(after_line);
-    Serial.println("LETTER");
-    Serial.println(letter);
-
     if (letter == 'M') gcodeparser::handleM(line);
     if (letter == 'G') gcodeparser::handleG(line);
-    if (strcmp(after_line, "$H") == 0) gcodeparser::ToHome();
+    if (letter == 'H' || (line[0] == '$' && line[1] == 'H')) gcodeparser::ToHome();
     if (strcmp(after_line, "$J=") == 0) gcodeparser::MoveForXYPara(line); // TESTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 }
 
@@ -131,6 +129,7 @@ void gcodeparser::MoveForXYPara(const char *line){
 void gcodeparser::G_MoveSpeed(int speed, XY positions){
     if (modes.pm == RELATIVE) {
         ChangeDir(positions.x, positions.y);
+        //gcodeparser::moveDig(abs(positions.x), abs(positions.y), 10);
         if (positions.x != 0) moveMM(_XStep, MOTOR_PULSE_ON, speed, abs(positions.x));
         if (positions.y != 0) moveMM(_YStep, MOTOR_PULSE_ON, speed, abs(positions.y));
         _AX += positions.x;
@@ -141,6 +140,7 @@ void gcodeparser::G_MoveSpeed(int speed, XY positions){
         float Ymm = positions.y - _AY;
 
         ChangeDir(Xmm, Ymm);
+        //gcodeparser::moveDig(abs(Xmm), abs(Ymm), 10);
         if (Xmm != 0) moveMM(_XStep, MOTOR_PULSE_ON, speed, abs(Xmm));
         if (Ymm != 0) moveMM(_YStep, MOTOR_PULSE_ON, speed, abs(Ymm));
         _AX = positions.x;
@@ -148,9 +148,60 @@ void gcodeparser::G_MoveSpeed(int speed, XY positions){
     }
 }
 
+void gcodeparser::moveDig(float Xmm, float Ymm, float MIN_INTERVAL){
+    if (Xmm == 0) Xmm = 0.1;
+    if (Ymm == 0) Ymm = 0.1;
+
+    float dist = sqrt(Xmm * Xmm + Ymm * Ymm);
+    if (dist == 0) return;
+
+    float norm_x = Xmm / dist;
+    float norm_y = Ymm / dist;
+
+    int x_interval = max(1.0f, MIN_INTERVAL / abs(norm_x));
+    int y_interval = max(1.0f, MIN_INTERVAL / abs(norm_y));
+
+    unsigned long X_StepCount = 0;
+    unsigned long Y_StepCount = 0;
+    bool XState = LOW;
+    bool YState = LOW;
+
+    unsigned long XMicro = micros();
+    unsigned long YMicro = micros();
+
+    Serial.println(Xmm * _ScalingFactor);
+    Serial.println(Ymm * _ScalingFactor);
+    Serial.println(x_interval);
+    Serial.println(y_interval);
+
+    while (X_StepCount < Xmm * _ScalingFactor && Y_StepCount < Ymm * _ScalingFactor){
+        unsigned long now = micros();
+
+        XY limits = gcodeparser::Limits();
+
+        if (limits.x != 0 || limits.y != 0){
+            gcodeparser::ToHome();
+            return;
+        }
+
+        if (X_StepCount < Xmm * _ScalingFactor && now - XMicro >= x_interval){
+            XState = !XState;
+            digitalWrite(_XStep, XState);
+            XMicro = now;
+            X_StepCount++;
+        }
+
+        if (Y_StepCount < Ymm * _ScalingFactor && now - YMicro >= y_interval){
+            YState = !YState;
+            digitalWrite(_YStep, YState);
+            YMicro = now;
+            Y_StepCount++;
+        }
+    }
+}
 
 void gcodeparser::ChangeDir(float x, float y){
-    if (x < 0) {
+    if (x > 0) {
         digitalWrite(_XDir, HIGH);
         _XDirState = HIGH;
     }
@@ -188,7 +239,9 @@ void gcodeparser::pulsePin(int pin, int timeOn, int timeOff, int count, bool Lim
 
 void gcodeparser::ToHome(){
     digitalWrite(_XDir, HIGH);
+    _XDirState = HIGH;
     digitalWrite(_YDir, LOW);
+    _YDirState = LOW;
     for (int i = 0; i < 100000; i++){
         digitalWrite(_XStep, HIGH);
         delayMicroseconds(MOTOR_PULSE_ON);
@@ -196,7 +249,7 @@ void gcodeparser::ToHome(){
         delayMicroseconds(MOTOR_PULSE_OFF_FAST);
 
         XY l = gcodeparser::Limits();
-        if (l.x != 0) break;
+        if (l.x < 0) break;
     }
 
     Serial.println("reached right X pos, switching to Y!");
@@ -208,14 +261,39 @@ void gcodeparser::ToHome(){
         delayMicroseconds(MOTOR_PULSE_OFF_FAST);
 
         XY l = gcodeparser::Limits();
-        if (l.y != 0) break;
+        if (l.y < 0) break;
     }
     digitalWrite(_XDir, LOW);
+    _XDirState = LOW;
     digitalWrite(_YDir, HIGH);
+    _YDirState = HIGH;
 
-    gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_SLOW, 10, false);
-    gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_SLOW, 10, false);
+    gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
     Serial.println("reached home point!");
+}
+
+void gcodeparser::escapeLimits(XY limits){
+    if (limits.x > 0){
+        digitalWrite(_XDir, LOW);
+        _XDirState = LOW;
+        
+        gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    }else if(limits.y < 0){
+        digitalWrite(_XDir, HIGH);
+        _XDirState = HIGH;
+        gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    }
+
+    if (limits.x > 0){
+        digitalWrite(_YDir, LOW);
+        _YDirState = LOW;
+        gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    }else if(limits.x < 0){
+        digitalWrite(_YDir, HIGH);
+        _YDirState = HIGH;
+        gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    }
 }
 
 /*
@@ -264,7 +342,10 @@ XY gcodeparser::parseXY(const char *line) {
             ptr++; // skip anything else
         }
     }
-
+    Serial.print("X: ");
+    Serial.println(result.x);
+    Serial.print("Y: ");
+    Serial.println(result.y);
     return result;
 }
 
@@ -284,8 +365,11 @@ void gcodeparser::handleM(const char *line){
             pen.write(m5value);
             break;
         case '6':
-            digitalWrite(_YDir, LOW);
-            moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10);
+            digitalWrite(_YDir, HIGH);
+            digitalWrite(_XDir, LOW);
+            _XDirState = LOW;
+            _YDirState = HIGH;
+            gcodeparser::moveDig(100, 100, 50);
             break;
     }
 }
@@ -321,6 +405,7 @@ int gcodeparser::fixLine(const char *line, char words[MAX_WORDS][MAX_WORD_LENGTH
                 charIndex = 0;
             }
         }
+        
 
         // Append character
         if (wordIndex >= 0 && wordIndex < MAX_WORDS && charIndex < MAX_WORD_LENGTH - 1) {
@@ -336,5 +421,3 @@ int gcodeparser::fixLine(const char *line, char words[MAX_WORDS][MAX_WORD_LENGTH
 
     return wordIndex + 1;
 }
-
-// 1000 pulse at 100 100 is 49mm
