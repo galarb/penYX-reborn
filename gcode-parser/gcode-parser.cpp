@@ -1,12 +1,10 @@
 #include "gcode-parser.h"
 // in the motors direction, LOW is left HIGH is right
 
-
-
 gcodeparser::gcodeparser(Stream &serial) : serialPort(serial), charCount(0) {}
 
 void gcodeparser::setup(int ServoPin, int XDir, int XStep, int YDir, int YStep,
-                        int XLIMIT, int YLIMIT, int ScalingFactor){
+                        int XLIMIT, int YLIMIT, float ScalingFactor){
     
     modes.pm = RELATIVE; // sets the default mode to be relative
 
@@ -29,6 +27,8 @@ void gcodeparser::setup(int ServoPin, int XDir, int XStep, int YDir, int YStep,
 
     _AX = 0;
     _AY = 0;
+
+    Serial.println("ok");
 }
 
 void gcodeparser::initPins(){
@@ -45,26 +45,27 @@ void gcodeparser::initPins(){
 void gcodeparser::process() {
     while (serialPort.available()) {
         char c = serialPort.read();
-        Serial.println("ok");
-        if (c == '\n' || c == '\r') { // MAKE A NEW LINE
-            lineBuffer[charCount] = '\0';
-            if (lineBuffer[0] == 'M' && lineBuffer[1] == '3') StartCode = true;
-            if (StartCode){
-                if (lineBuffer != "?"){
-                    Serial.print("Line: ");
-                    Serial.println(lineBuffer);
-                    handleLine(lineBuffer);
-                }
-            }
-            charCount = 0;
+
+        if (c == '\n' || c == '\r') { // NEW LINE
+            if (charCount == 0) continue; // skip empty lines (from \r\n)
+
+            lineBuffer[charCount] = '\0'; // terminate the string
+            Serial.print("Line: ");
+            Serial.println(lineBuffer);
+
+            handleLine(lineBuffer);
+
+            Serial.println("ok"); // only after command executed
+
+            charCount = 0; // reset buffer
             lineCount++;
         } else {
-            if (charCount < MAX_LINE_LENGTH - 1) { // ADD THE CHAR TO THE LINE BUFFER
+            if (charCount < MAX_LINE_LENGTH - 1) {
                 lineBuffer[charCount++] = c;
             }
         }
     }
-} // PROCESS THE GC FILE SENT IN THE SERIAL AND CALLS handleLine FOR EACH LINE!
+}
 
 void gcodeparser::handleLine(const char *line){
     char after_line[4] = {0};
@@ -93,11 +94,13 @@ void gcodeparser::handleG(const char *line) {
 
         case G_MOVE_FAST:
             positions = gcodeparser::parseXY(line);
+            if (positions.x == 0 && positions.y == 0) return;
             gcodeparser::G_MoveSpeed(MOTOR_PULSE_OFF_FAST, positions);
             break;
 
         case G_MOVE_SLOW:
             positions = gcodeparser::parseXY(line);
+            if (positions.x == 0 && positions.y == 0) return;
             gcodeparser::G_MoveSpeed(MOTOR_PULSE_OFF_SLOW, positions);
             break;
         
@@ -186,14 +189,14 @@ void gcodeparser::moveDig(float Xmm, float Ymm, float MIN_INTERVAL){
 
         if (X_StepCount < Xmm * _ScalingFactor && now - XMicro >= x_interval){
             XState = !XState;
-            digitalWrite(_XStep, XState);
+            digitalWrite(abs(_XStep), XState);
             XMicro = now;
             X_StepCount++;
         }
 
         if (Y_StepCount < Ymm * _ScalingFactor && now - YMicro >= y_interval){
             YState = !YState;
-            digitalWrite(_YStep, YState);
+            digitalWrite(abs(_YStep), YState);
             YMicro = now;
             Y_StepCount++;
         }
@@ -222,16 +225,15 @@ void gcodeparser::ChangeDir(float x, float y){
     }
 }
 
-void gcodeparser::pulsePin(int pin, int timeOn, int timeOff, int count, bool Limits = true){
-    for (int i = 0; i < count; i++){
+void gcodeparser::pulsePin(int pin, unsigned long timeOn, unsigned long timeOff, unsigned long count, bool Limits) {
+    for (unsigned long i = 0; i < count; ++i) {
         digitalWrite(pin, HIGH);
         delayMicroseconds(timeOn);
         digitalWrite(pin, LOW);
         delayMicroseconds(timeOff);
 
-        if (Limits){
+        if (Limits) {
             XY l = gcodeparser::Limits();
-
             if (l.x != 0 || l.y != 0) return;
         }
     }
@@ -321,9 +323,28 @@ XY gcodeparser::Limits(){
     return xy;
 }
 
-void gcodeparser::moveMM(int pin, int timeOn, int timeOff, int mm, bool Limits = true){
-    gcodeparser::pulsePin(pin, timeOn, timeOff, mm * _ScalingFactor, Limits);
+void gcodeparser::moveMM(int pin, unsigned long timeOn, unsigned long timeOff, float mm, bool Limits)
+{
+    // Determine which axis we're moving
+    float &accum = (pin == _XStep) ? _x_accum : _y_accum;
+
+    // Add new fractional moves
+    accum += mm * _ScalingFactor;   // mm × steps_per_mm
+
+    // Extract full pulses
+    long pulses = (long)floor(accum);
+
+    // Keep only the fractional remainder for next time
+    accum -= pulses;
+
+    // If no full pulse, exit
+    if (pulses <= 0)
+        return;
+
+    // Perform movement
+    pulsePin(pin, timeOn, timeOff, (unsigned long)pulses, Limits);
 }
+
 
 XY gcodeparser::parseXY(const char *line) {
     XY result = {0.0f, 0.0f};
@@ -353,9 +374,10 @@ void gcodeparser::handleM(const char *line){
     int m3value = M3_MOVE_VALUE;
     int m4value = M4_MOVE_VALUE;
     int m5value = M5_MOVE_VALUE;
-
+    Serial.println("M running!");
     switch (line[1]){ // the number after M example: M3, M4, M5
         case '3':
+            Serial.println("M3");
             pen.write(m3value);
             break;
         case '4':
