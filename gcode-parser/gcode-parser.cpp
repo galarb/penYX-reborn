@@ -6,8 +6,6 @@ gcodeparser::gcodeparser(Stream &serial) : serialPort(serial), charCount(0) {}
 void gcodeparser::setup(int ServoPin, int XDir, int XStep, int YDir, int YStep,
                         int XLIMIT, int YLIMIT, float ScalingFactor){
     
-    modes.pm = RELATIVE; // sets the default mode to be relative
-
     pen.attach(ServoPin);
     
     _XDir = XDir;
@@ -24,9 +22,6 @@ void gcodeparser::setup(int ServoPin, int XDir, int XStep, int YDir, int YStep,
     gcodeparser::initPins();
 
     gcodeparser::ToHome(); // move to home at start to reset and start count x and y positions in absolute mode!
-
-    _AX = 0;
-    _AY = 0;
 
     Serial.println("ok");
 }
@@ -91,16 +86,25 @@ void gcodeparser::handleG(const char *line) {
 
     switch (atoi(after_line)) {
         XY positions;
-
+        
         case G_MOVE_FAST:
             positions = gcodeparser::parseXY(line);
+
             if (positions.x == 0 && positions.y == 0) return;
+
+            xDetectedList[detectedListIndex] = positions.x;
+            yDetectedList[detectedListIndex] = positions.y;
+            detectedListIndex++;
+
             gcodeparser::G_MoveSpeed(MOTOR_PULSE_OFF_FAST, positions);
             break;
 
         case G_MOVE_SLOW:
             positions = gcodeparser::parseXY(line);
             if (positions.x == 0 && positions.y == 0) return;
+            xDetectedList[detectedListIndex] = positions.x;
+            yDetectedList[detectedListIndex] = positions.y;
+            detectedListIndex++;
             gcodeparser::G_MoveSpeed(MOTOR_PULSE_OFF_SLOW, positions);
             break;
         
@@ -130,25 +134,17 @@ void gcodeparser::MoveForXYPara(const char *line){
 }
 
 void gcodeparser::G_MoveSpeed(int speed, XY positions){
-    if (modes.pm == RELATIVE) {
-        ChangeDir(positions.x, positions.y);
-        //gcodeparser::moveDig(abs(positions.x), abs(positions.y), 10);
-        if (positions.x != 0) moveMM(_XStep, MOTOR_PULSE_ON, speed, abs(positions.x));
-        if (positions.y != 0) moveMM(_YStep, MOTOR_PULSE_ON, speed, abs(positions.y));
-        _AX += positions.x;
-        _AY += positions.y;
-    }
-    else if (modes.pm == ABSOLUTE) {
-        float Xmm = positions.x - _AX;
-        float Ymm = positions.y - _AY;
+    if (modes.pm == ABSOLUTE) return;
 
-        ChangeDir(Xmm, Ymm);
-        //gcodeparser::moveDig(abs(Xmm), abs(Ymm), 10);
-        if (Xmm != 0) moveMM(_XStep, MOTOR_PULSE_ON, speed, abs(Xmm));
-        if (Ymm != 0) moveMM(_YStep, MOTOR_PULSE_ON, speed, abs(Ymm));
-        _AX = positions.x;
-        _AY = positions.y;
-    }
+    ChangeDir(positions.x, positions.y);
+
+    Serial.print("Moving in X: ");
+    Serial.println(positions.x);
+    Serial.print("Moving in Y: ");
+    Serial.println(positions.y);
+    gcodeparser::MoveXY(abs(positions.x), abs(positions.y), MOTOR_PULSE_ON, speed);
+    //if (positions.x != 0) moveMM(_XStep, MOTOR_PULSE_ON, speed, abs(positions.x));
+    //if (positions.y != 0) moveMM(_YStep, MOTOR_PULSE_ON, speed, abs(positions.y));
 }
 
 void gcodeparser::moveDig(float Xmm, float Ymm, float MIN_INTERVAL){
@@ -204,7 +200,7 @@ void gcodeparser::moveDig(float Xmm, float Ymm, float MIN_INTERVAL){
 }
 
 void gcodeparser::ChangeDir(float x, float y){
-    if (x > 0) {
+    if (x < 0) {
         digitalWrite(_XDir, HIGH);
         _XDirState = HIGH;
     }
@@ -234,12 +230,18 @@ void gcodeparser::pulsePin(int pin, unsigned long timeOn, unsigned long timeOff,
 
         if (Limits) {
             XY l = gcodeparser::Limits();
-            if (l.x != 0 || l.y != 0) return;
+            if (l.x != 0 || l.y != 0){
+                Serial.println("HIT LIMIT SWITCH!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                return;
+            }
         }
     }
 }
 
 void gcodeparser::ToHome(){
+    Serial.println("M3");
+    pen.write(M3_MOVE_VALUE);
+
     digitalWrite(_XDir, HIGH);
     _XDirState = HIGH;
     digitalWrite(_YDir, LOW);
@@ -270,8 +272,8 @@ void gcodeparser::ToHome(){
     digitalWrite(_YDir, HIGH);
     _YDirState = HIGH;
 
-    gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
-    gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+    gcodeparser::MoveXY(10, 0, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
+    gcodeparser::MoveXY(0, 10, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
     Serial.println("reached home point!");
 }
 
@@ -280,21 +282,21 @@ void gcodeparser::escapeLimits(XY limits){
         digitalWrite(_XDir, LOW);
         _XDirState = LOW;
         
-        gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+        gcodeparser::MoveXY(10, 0, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
     }else if(limits.y < 0){
         digitalWrite(_XDir, HIGH);
         _XDirState = HIGH;
-        gcodeparser::moveMM(_XStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+        gcodeparser::MoveXY(10, 0, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
     }
 
     if (limits.x > 0){
         digitalWrite(_YDir, LOW);
         _YDirState = LOW;
-        gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+        gcodeparser::MoveXY(0, 10, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
     }else if(limits.x < 0){
         digitalWrite(_YDir, HIGH);
         _YDirState = HIGH;
-        gcodeparser::moveMM(_YStep, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST, 10, false);
+        gcodeparser::MoveXY(0, 10, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_FAST);
     }
 }
 
@@ -325,26 +327,65 @@ XY gcodeparser::Limits(){
 
 void gcodeparser::moveMM(int pin, unsigned long timeOn, unsigned long timeOff, float mm, bool Limits)
 {
-    // Determine which axis we're moving
-    float &accum = (pin == _XStep) ? _x_accum : _y_accum;
-
-    // Add new fractional moves
-    accum += mm * _ScalingFactor;   // mm × steps_per_mm
-
-    // Extract full pulses
-    long pulses = (long)floor(accum);
-
-    // Keep only the fractional remainder for next time
-    accum -= pulses;
-
-    // If no full pulse, exit
-    if (pulses <= 0)
-        return;
-
-    // Perform movement
-    pulsePin(pin, timeOn, timeOff, (unsigned long)pulses, Limits);
+    pulsePin(pin, timeOn, timeOff, (unsigned long)mm * _ScalingFactor, Limits);
 }
 
+void gcodeparser::MoveXY(int x_mm, int y_mm, unsigned long time_on, unsigned long time_off) {
+  int STEPX = _XStep;
+  int STEPY = _YStep;
+  long xSteps = (long)x_mm * _ScalingFactor;
+  long ySteps = (long)y_mm * _ScalingFactor;
+
+  long dx = abs(xSteps);
+  long dy = abs(ySteps);
+
+  long error = 0;
+
+  // Determine major/minor axis
+  if (dx >= dy) {
+    // X is major axis
+    for (long i = 0; i < dx; i++) {
+
+      // Step X
+      digitalWrite(STEPX, HIGH);
+      delayMicroseconds(time_on);
+      digitalWrite(STEPX, LOW);
+
+      error += dy;
+      if (error >= dx) {
+        // Step Y
+        digitalWrite(STEPY, HIGH);
+        delayMicroseconds(time_on);
+        digitalWrite(STEPY, LOW);
+
+        error -= dx;
+      }
+
+      delayMicroseconds(time_off);
+    }
+  } else {
+    // Y is major axis
+    for (long i = 0; i < dy; i++) {
+
+      // Step Y
+      digitalWrite(STEPY, HIGH);
+      delayMicroseconds(time_on);
+      digitalWrite(STEPY, LOW);
+
+      error += dx;
+      if (error >= dy) {
+        // Step X
+        digitalWrite(STEPX, HIGH);
+        delayMicroseconds(time_on);
+        digitalWrite(STEPX, LOW);
+
+        error -= dy;
+      }
+
+      delayMicroseconds(time_off);
+    }
+  }
+}
 
 XY gcodeparser::parseXY(const char *line) {
     XY result = {0.0f, 0.0f};
@@ -354,19 +395,23 @@ XY gcodeparser::parseXY(const char *line) {
         if (*ptr == 'X' || *ptr == 'x') {
             ptr++;
             result.x = atof(ptr);
+            result.x = round(result.x * 1000.0f) / 1000.0f;
         } 
         else if (*ptr == 'Y' || *ptr == 'y') {
             ptr++;
             result.y = atof(ptr);
+            result.y = round(result.y * 1000.0f) / 1000.0f;
         } 
         else {
-            ptr++; // skip anything else
+            ptr++;
         }
     }
+
     Serial.print("X: ");
-    Serial.println(result.x);
+    Serial.println(result.x, 3);
     Serial.print("Y: ");
-    Serial.println(result.y);
+    Serial.println(result.y, 3);
+
     return result;
 }
 
@@ -387,59 +432,25 @@ void gcodeparser::handleM(const char *line){
             pen.write(m5value);
             break;
         case '6':
-            digitalWrite(_YDir, HIGH);
-            digitalWrite(_XDir, LOW);
-            _XDirState = LOW;
-            _YDirState = HIGH;
-            gcodeparser::moveDig(100, 100, 50);
-            break;
-    }
-}
-
-int gcodeparser::fixLine(const char *line, char words[MAX_WORDS][MAX_WORD_LENGTH]) {
-    int wordIndex = -1;
-    int charIndex = 0;
-    bool inComment = false;
-    bool groupMode = false; // true after G or M, until next G/M or end
-
-    for (int i = 0; line[i] != '\0'; i++) {
-        char c = line[i];
-
-        // Stop at comment
-        if (c == ';') break;
-
-        // Skip whitespace
-        if (c == ' ' || c == '\t') continue;
-
-        if (isalpha(c)) {
-            // Start a new word if it's G/M or S/F standalone
-            if (c == 'G' || c == 'M') {
-                wordIndex++;
-                charIndex = 0;
-                groupMode = true; // G/M group
-            } else if (c == 'S' || c == 'F') {
-                wordIndex++;
-                charIndex = 0;
-                groupMode = false; // standalone
-            } else if (!groupMode) {
-                // ignore other letters as new word
-                wordIndex++;
-                charIndex = 0;
+            // Print all detected positions
+            for (int i = 0; i < detectedListIndex; i++){
+                Serial.print("Detected: x: ");
+                Serial.print(xDetectedList[i]);
+                Serial.print(", y: ");
+                Serial.println(yDetectedList[i]);
             }
-        }
-        
+            Serial.println("-----------------------------");
+            
+            // Clear lists
+            for (int i = 0; i < detectedListIndex; i++){
+                xDetectedList[i] = 0;
+                yDetectedList[i] = 0;
+            }
 
-        // Append character
-        if (wordIndex >= 0 && wordIndex < MAX_WORDS && charIndex < MAX_WORD_LENGTH - 1) {
-            words[wordIndex][charIndex++] = c;
-            words[wordIndex][charIndex] = '\0';
-        }
+            detectedListIndex = 0;
 
-        // End group mode if next character is G/M/S/F
-        if (groupMode && (line[i + 1] == 'G' || line[i + 1] == 'M' || line[i + 1] == 'S' || line[i + 1] == 'F')) {
-            groupMode = false;
-        }
+            //gcodeparser::MoveXY(20, 60, MOTOR_PULSE_ON, MOTOR_PULSE_OFF_SLOW);
+            break;
+
     }
-
-    return wordIndex + 1;
 }
