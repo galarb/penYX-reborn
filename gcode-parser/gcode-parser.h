@@ -11,15 +11,15 @@ static constexpr int MAX_WORDS = 10;
 static constexpr int MAX_WORD_LENGTH = 50;
 
 // pulse timing (microseconds)
-static constexpr unsigned long MOTOR_PULSE_ON = 11UL;
+static constexpr unsigned long MOTOR_PULSE_ON = 10UL;
 static constexpr unsigned long MOTOR_PULSE_OFF_FAST = 400UL;
-static constexpr unsigned long MOTOR_PULSE_OFF_WORK = 1200UL;
-static constexpr unsigned long MOTOR_PULSE_OFF_SLOW = 1500UL;
+static constexpr unsigned long MOTOR_PULSE_OFF_WORK = 1800UL;
+static constexpr unsigned long MOTOR_PULSE_OFF_SLOW = 2000UL;
 
 // PEN positions
-static constexpr int M3_MOVE_VALUE = 90;
-static constexpr int M4_MOVE_VALUE = 0;
-static constexpr int M5_MOVE_VALUE = 40;
+static constexpr int M3_MOVE_VALUE = 0; // pen up
+static constexpr int M4_MOVE_VALUE = 40; // pen down
+static constexpr int M5_MOVE_VALUE = 30; //pen travel
 
 // G command codes
 static constexpr int G_MOVE_FAST = 1;
@@ -53,20 +53,18 @@ public:
     float getScalingFactor() const { return _ScalingFactor; }
 
 private:
-    bool StartCode = false;
     Servo pen;
 
     MODES modes;
-    float _AX = 0.0f; // absolute X in mm
-    float _AY = 0.0f; // absolute Y in mm
 
     Stream &serialPort;
     char lineBuffer[MAX_LINE_LENGTH];
     int charCount = 0;
     int lineCount = 0;
 
-    int SpindleSpeed = 0;
-    int FeedRate = 0;
+    float xDetectedList[80];
+    float yDetectedList[80];
+    int detectedListIndex = 0;
 
     int _XDir = -1, _XStep = -1;
     int _YDir = -1, _YStep = -1;
@@ -74,11 +72,9 @@ private:
     int _XLIMIT = -1, _YLIMIT = -1;
 
     // steps-per-mm (float to avoid truncation bugs)
-    float _ScalingFactor = 1.0f;
+    float _ScalingFactor = 84.21f;
 
     int _XDirState = LOW, _YDirState = LOW;
-
-    bool canSendOk = true;
 
     XY Limits();
 
@@ -93,18 +89,16 @@ private:
     void MoveForXYPara(const char *line);
     void ToHome();
 
+    void MoveXY(int x_mm, int y_mm, unsigned long time_on, unsigned long time_off);
+
     // note: count type is unsigned long to allow many pulses
     void pulsePin(int pin, unsigned long timeOn, unsigned long timeOff, unsigned long count, bool Limits = true);
 
     // mm is float now (not int) so fractional mm are preserved
     void moveMM(int pin, unsigned long timeOn, unsigned long timeOff, float mm, bool Limits = true);
 
-    int fixLine(const char *line, char words[MAX_WORDS][MAX_WORD_LENGTH]);
     void moveDig(float Xmm, float Ymm, float MIN_INTERVAL);
     void escapeLimits(XY limits);
-
-    float _x_accum = 0.0f;
-    float _y_accum = 0.0f;
 };
 
 #endif // if you used include guards
