@@ -1,102 +1,84 @@
-#define MOTOR_PULSE_ON 11
-#define MOTOR_PULSE_OFF_FAST 400
-#define MOTOR_PULSE_OFF_WORK 1200
-#define MOTOR_PULSE_OFF_SLOW 1500
+// ========= USER SETTINGS ========= //
+int X_DIR_PIN   = 5;
+int X_STEP_PIN  = 2;
 
-#define DIRY 5
-#define STEPY 2
-#define DIRX 6
-#define STEPX 3
+int Y_DIR_PIN   = 6;
+int Y_STEP_PIN  = 3;
 
-class MotorTester {
-  public:
-    int XdirPin;
-    int XstepPin;
-    int YdirPin;
-    int YstepPin;
-
-    // Constructor
-    MotorTester(int _Xdirpin, int _Xsteppin, int _Ydirpin, int _Ysteppin) {
-      XdirPin = _Xdirpin;
-      XstepPin = _Xsteppin;
-      YdirPin = _Ydirpin;
-      YstepPin = _Ysteppin;
-
-      pinMode(XdirPin, OUTPUT);
-      pinMode(XstepPin, OUTPUT);
-      pinMode(YdirPin, OUTPUT);
-      pinMode(YstepPin, OUTPUT);
-    }
-
-    // Move one motor
-    void moveMotor(int stepPin, int times, int speed) {
-      for (int i = 0; i < times; i++) {
-        digitalWrite(stepPin, HIGH);
-        delayMicroseconds(MOTOR_PULSE_ON);
-        digitalWrite(stepPin, LOW);
-        delayMicroseconds(speed);
-      }
-    }
-
-    // Move both motors together
-    void moveBoth(int times, int speed) {
-      for (int i = 0; i < times; i++) {
-        digitalWrite(XstepPin, HIGH);
-        digitalWrite(YstepPin, HIGH);
-        delayMicroseconds(MOTOR_PULSE_ON);
-        digitalWrite(XstepPin, LOW);
-        digitalWrite(YstepPin, LOW);
-        delayMicroseconds(speed);
-      }
-    }
-};
-
-// Create global object for both X and Y
-MotorTester penyxtest(DIRX, STEPX, DIRY, STEPY);
+int Z_DIR_PIN   = 7;
+int Z_STEP_PIN  = 4;
+int time_on = 10;
+int time_off = 1200;
+//////////////////////////////////////
 
 void setup() {
+  pinMode(X_DIR_PIN, OUTPUT);
+  pinMode(X_STEP_PIN, OUTPUT);
+
+  pinMode(Y_DIR_PIN, OUTPUT);
+  pinMode(Y_STEP_PIN, OUTPUT);
+
+  pinMode(Z_DIR_PIN, OUTPUT);
+  pinMode(Z_STEP_PIN, OUTPUT);
+
   Serial.begin(115200);
-  Serial.println("Finished setup");
+  Serial.println("Stepper XYZ test ready.");
+}
+
+// Move 3 axes at once so they finish together
+void moveXYZ(long dx, long dy, long dz) {
+  // Set directions
+  digitalWrite(X_DIR_PIN, dx > 0);
+  digitalWrite(Y_DIR_PIN, dy > 0);
+  digitalWrite(Z_DIR_PIN, dz > 0);
+
+  dx = abs(dx);
+  dy = abs(dy);
+  dz = abs(dz);
+
+  long maxSteps = max(dx, max(dy, dz));
+
+  // These accumulate fractional steps
+  long xCount = 0;
+  long yCount = 0;
+  long zCount = 0;
+
+  for (long i = 0; i < maxSteps; i++) {
+    xCount += dx;
+    yCount += dy;
+    zCount += dz;
+
+    if (xCount >= maxSteps) {
+      digitalWrite(X_STEP_PIN, HIGH);
+      delayMicroseconds(time_on);
+      digitalWrite(X_STEP_PIN, LOW);
+      xCount -= maxSteps;
+    }
+
+    if (yCount >= maxSteps) {
+      digitalWrite(Y_STEP_PIN, HIGH);
+      delayMicroseconds(time_on);
+      digitalWrite(Y_STEP_PIN, LOW);
+      yCount -= maxSteps;
+    }
+
+    if (zCount >= maxSteps) {
+      digitalWrite(Z_STEP_PIN, HIGH);
+      delayMicroseconds(time_on);
+      digitalWrite(Z_STEP_PIN, LOW);
+      zCount -= maxSteps;
+    }
+
+    delayMicroseconds(time_off);
+  }
 }
 
 void loop() {
-  // Move both motors forward
-  digitalWrite(penyxtest.XdirPin, HIGH);
-  digitalWrite(penyxtest.YdirPin, HIGH);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_SLOW);
+  // Example test movement: X100, Y50, Z20 steps
+  moveXYZ(1000, 1000, 1000);
+  delay(500);
 
-  delay(1000);
-
-  // Move both motors backward
-  digitalWrite(penyxtest.XdirPin, LOW);
-  digitalWrite(penyxtest.YdirPin, LOW);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_SLOW);
-
-  delay(1000);
-
-  digitalWrite(penyxtest.XdirPin, HIGH);
-  digitalWrite(penyxtest.YdirPin, HIGH);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_WORK);
-
-  delay(1000);
-
-  // Move both motors backward
-  digitalWrite(penyxtest.XdirPin, LOW);
-  digitalWrite(penyxtest.YdirPin, LOW);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_WORK);
-
-  delay(1000);
-
-  digitalWrite(penyxtest.XdirPin, HIGH);
-  digitalWrite(penyxtest.YdirPin, HIGH);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_FAST);
-
-  delay(1000);
-
-  // Move both motors backward
-  digitalWrite(penyxtest.XdirPin, LOW);
-  digitalWrite(penyxtest.YdirPin, LOW);
-  penyxtest.moveBoth(2000, MOTOR_PULSE_OFF_FAST);
-
+  // Move back
+  moveXYZ(-1000, -1000, -1000);
   delay(1000);
 }
